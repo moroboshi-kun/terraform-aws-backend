@@ -14,6 +14,7 @@ It is intended to be used as a **GitHub template** and run **once per AWS accoun
 This project provisions the following AWS resources:
 
 ### S3 Bucket (Terraform State)
+
 - Stores Terraform state files
 - Versioning enabled (for state recovery)
 - Server-side encryption enabled
@@ -21,13 +22,14 @@ This project provisions the following AWS resources:
 - `prevent_destroy` enabled to guard against accidental deletion
 
 ### DynamoDB Table (State Locking)
+
 - Used for Terraform state locking
 - `PAY_PER_REQUEST` billing mode
 - Point-in-Time Recovery (PITR) enabled
 - `prevent_destroy` enabled
 
 This project **intentionally uses local Terraform state**.  
-The remote backend it creates is meant to be consumed by *other* Terraform projects.
+The remote backend it creates is meant to be consumed by _other_ Terraform projects.
 
 ---
 
@@ -80,13 +82,46 @@ terraform init
 
 ---
 
-### 3. Apply the configuration
+### 3. Define input variables (recommended)
 
-You must supply a **globally unique S3 bucket name**.
+This template is designed to be used with a `terraform.tfvars` file.
+
+Create a file named `terraform.tfvars` in the root of the repository:
+
+```hcl
+# Important: Bucket name must be globally unique
+state_bucket_name = "my-org-terraform-state-123456789012"
+
+# Optional: override the default DynamoDB lock table name
+lock_table_name   = "terraform-locks"
+```
+
+---
+
+### 4. Apply the configuration
+
+With `terraform.tfvars` in place, apply the configuration:
 
 ```bash
+terraform apply
+```
+
+This is the **recommended and expected workflow** for this template.
+
+---
+
+If you choose not to use a `terraform.tfvars` file, you must supply required variables explicitly.
+
+```bash
+# Important: You must supply a globally unique S3 Bucket name
 terraform apply \
   -var="state_bucket_name=my-org-terraform-state-123456789012"
+```
+
+To override the default DynamoDB lock table name (`terraform-locks)`, include:
+
+```bash
+  -var="lock_table_name=my-org-terraform-locks-123456789012"
 ```
 
 ⚠️ **Important:**  
@@ -122,6 +157,7 @@ terraform {
 ```
 
 ### Notes
+
 - Each Terraform project **must use a unique `key`**
 - Multiple projects can safely share:
   - The same S3 bucket
@@ -133,7 +169,9 @@ terraform {
 ## Design Decisions & Conventions
 
 ### One Backend per AWS Account
+
 This template follows the common pattern of:
+
 - One S3 bucket per AWS account
 - One DynamoDB lock table per AWS account
 - Many Terraform projects sharing the same backend infrastructure
@@ -145,6 +183,7 @@ This template follows the common pattern of:
 This repository **does not commit `terraform.lock.hcl` by design**.
 
 Because this project is intended to be used as a **template**, committing the lock file would:
+
 - Add noise for first-time users
 - Immediately become stale after cloning
 - Provide limited benefit for a one-time bootstrap project
@@ -153,7 +192,7 @@ Downstream Terraform projects are encouraged to commit their own `terraform.lock
 
 ---
 
-## What This Repository Does *Not* Do
+## What This Repository Does _Not_ Do
 
 - It does not manage application or environment infrastructure
 - It does not configure CI/CD pipelines

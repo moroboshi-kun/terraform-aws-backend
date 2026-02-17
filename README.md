@@ -1,154 +1,172 @@
-# Terraform AWS Backend Bootstrap
+# Terraform AWS Backend
 
-This repository bootstraps a **remote Terraform backend on AWS** using:
+This repository provisions a **remote Terraform backend on AWS**,
+consisting of:
 
-- **Amazon S3** for Terraform state storage
-- **Amazon DynamoDB** for state locking and concurrency control
+-   An S3 bucket for storing Terraform state
+-   A DynamoDB table for state locking
 
-It is intended to be used as a **GitHub template** and run **once per AWS account** to create the foundational infrastructure that all other Terraform projects will rely on.
+It is intended to be deployed once per AWS account to provide durable,
+shared backend infrastructure for other Terraform projects.
 
----
+------------------------------------------------------------------------
 
-## What This Creates
+# Architecture
 
-This project provisions the following AWS resources:
+## Foundational Infrastructure
 
-### S3 Bucket (Terraform State)
+-   S3 bucket (versioned, encrypted, private)
+-   DynamoDB lock table (on-demand billing)
 
-- Stores Terraform state files
-- Versioning enabled (for state recovery)
-- Server-side encryption enabled
-- All public access blocked
-- `prevent_destroy` enabled to guard against accidental deletion
+## Terraform Workloads
 
-### DynamoDB Table (State Locking)
+Other Terraform repositories use this backend via the S3 backend
+configuration.
 
-- Used for Terraform state locking
-- `PAY_PER_REQUEST` billing mode
-- Point-in-Time Recovery (PITR) enabled
-- `prevent_destroy` enabled
+------------------------------------------------------------------------
 
-This project **intentionally uses local Terraform state**.  
-The remote backend it creates is meant to be consumed by _other_ Terraform projects.
+# Quick Start (Recommended Workflow)
 
----
+## 1. Clone the Repository
 
-## When to Use This Template
-
-Use this repository when:
-
-- Bootstrapping a new AWS account for Terraform usage
-- Establishing a shared, standardized Terraform backend
-- Preparing for CI/CD-driven Terraform workflows
-- Replacing manually created or ad-hoc Terraform backends
-
-This repository is typically run **once**, then left unchanged.
-
----
-
-## Terraform & Provider Versions
-
-- **Terraform:** tested with **Terraform v1.14.4**
-- **Terraform version constraint:** compatible with modern Terraform releases
-- **AWS Provider:** constrained to a compatible major version range
-
-Exact versions are not pinned to allow flexibility for downstream users.
-
----
-
-## Prerequisites
-
-- Terraform installed locally
-- AWS credentials configured (environment variables, AWS config, or IAM role)
-- Permissions to create:
-  - S3 buckets
-  - DynamoDB tables
-
----
-
-## Usage
-
-### 1. Create a repository from this template
-
-In GitHub, click **“Use this template”** to create a new repository for your AWS account.
-
----
-
-### 2. Initialize Terraform
-
-```bash
-terraform init
+``` bash
+git clone https://github.com/moroboshi-kun/terraform-aws-backend.git
+cd terraform-aws-backend
 ```
 
----
-
-### 3. Define input variables (recommended)
+## 2. Create `terraform.tfvars`
 
 This template is designed to be used with a `terraform.tfvars` file.
 
 Create a file named `terraform.tfvars` in the root of the repository:
 
-```hcl
+``` hcl
 # Important: Bucket name must be globally unique
 state_bucket_name = "my-org-terraform-state-123456789012"
 
-# Optional: override the default DynamoDB lock table name
+# Optional: override default DynamoDB lock table name
 lock_table_name   = "terraform-locks"
 ```
 
----
+## 3. Initialize and Apply
 
-### 4. Apply the configuration
-
-With `terraform.tfvars` in place, apply the configuration:
-
-```bash
+``` bash
+terraform init
 terraform apply
 ```
 
-This is the **recommended and expected workflow** for this template.
+This creates:
 
----
+-   The S3 backend bucket
+-   The DynamoDB locking table
 
-If you choose not to use a `terraform.tfvars` file, you must supply required variables explicitly.
+At this stage, the repository uses **local Terraform state**.
 
-```bash
-# Important: You must supply a globally unique S3 Bucket name
-terraform apply \
-  -var="state_bucket_name=my-org-terraform-state-123456789012"
+------------------------------------------------------------------------
+
+# Configuration Details
+
+## Supplying Variables Without `terraform.tfvars`
+
+If you choose not to use a `terraform.tfvars` file, required variables
+must be supplied explicitly:
+
+``` bash
+terraform apply   -var="state_bucket_name=my-org-terraform-state-123456789012"
 ```
 
-To override the default DynamoDB lock table name (`terraform-locks)`, include:
+To override the default DynamoDB lock table name:
 
-```bash
-  -var="lock_table_name=my-org-terraform-locks-123456789012"
+``` bash
+-var="lock_table_name=my-org-terraform-locks-123456789012"
 ```
 
-⚠️ **Important:**  
-The resources created by this project are protected with `prevent_destroy` and should **not be destroyed** once in use.
+## Important Notes
 
----
+-   The S3 bucket name must be globally unique.
+-   Backend resources are protected with `prevent_destroy`.
+-   Backend infrastructure should be treated as foundational and stable.
 
-## Outputs
+------------------------------------------------------------------------
 
-After a successful apply, Terraform outputs:
+# Remote State Migration (Optional but Recommended)
 
-- `state_bucket_name` – the S3 bucket storing Terraform state
-- `lock_table_name` – the DynamoDB table used for state locking
+After initial bootstrap, this repository can migrate its own state to
+the S3 backend it created.
 
-These values are used when configuring the backend in other Terraform projects.
+This eliminates dependency on a local `terraform.tfstate` file.
 
----
+## Step 1 --- Ensure Clean State
 
-## Using This Backend in Other Terraform Projects
+``` bash
+terraform plan
+```
 
-Example `backend "s3"` configuration:
+Expected:
 
-```hcl
+    No changes. Infrastructure is up-to-date.
+
+## Step 2 --- Add Backend Configuration
+
+Create a file named `backend.tf`:
+
+``` hcl
+terraform {
+  backend "s3" {
+    bucket         = var.state_bucket_name
+    key            = "root/backend.tfstate"
+    region         = "us-east-1"
+    dynamodb_table = var.lock_table_name
+    encrypt        = true
+  }
+}
+```
+
+The `key` determines the state file location inside the bucket.
+`root/backend.tfstate` is a logical name for foundational
+infrastructure.
+
+## Step 3 --- Migrate State
+
+``` bash
+terraform init -migrate-state
+```
+
+When prompted to copy existing state to the new backend, type:
+
+    yes
+
+## Step 4 --- Verify Migration
+
+``` bash
+terraform plan
+```
+
+Then confirm the state file exists:
+
+``` bash
+aws s3 ls s3://<bucket-name>/root/
+```
+
+## Step 5 --- Remove Local State Files
+
+``` bash
+rm -f terraform.tfstate terraform.tfstate.backup
+```
+
+The backend repository is now fully remote-managed.
+
+------------------------------------------------------------------------
+
+# Using This Backend in Other Terraform Projects
+
+Example backend configuration for other Terraform repositories:
+
+``` hcl
 terraform {
   backend "s3" {
     bucket         = "my-org-terraform-state-123456789012"
-    key            = "prod/vpc/terraform.tfstate"
+    key            = "dev/network.tfstate"
     region         = "us-east-1"
     dynamodb_table = "terraform-locks"
     encrypt        = true
@@ -156,52 +174,31 @@ terraform {
 }
 ```
 
-### Notes
+Guidelines:
 
-- Each Terraform project **must use a unique `key`**
-- Multiple projects can safely share:
-  - The same S3 bucket
-  - The same DynamoDB table
-- State isolation is achieved via the S3 key
+-   Each Terraform project must use a unique `key`.
+-   The bucket and lock table are shared per AWS account.
+-   Organize state files using logical prefixes (e.g., `dev/`, `prod/`,
+    `infra/`).
 
----
+------------------------------------------------------------------------
 
-## Design Decisions & Conventions
+# Future Enhancement Option
 
-### One Backend per AWS Account
+This backend infrastructure can alternatively be provisioned via a
+CloudFormation stack to eliminate bootstrap considerations.
 
-This template follows the common pattern of:
+This repository currently provisions the backend with Terraform and
+supports migrating its own state to S3.
 
-- One S3 bucket per AWS account
-- One DynamoDB lock table per AWS account
-- Many Terraform projects sharing the same backend infrastructure
+------------------------------------------------------------------------
 
----
+# Summary
 
-### `terraform.lock.hcl`
+This repository:
 
-This repository **does not commit `terraform.lock.hcl` by design**.
-
-Because this project is intended to be used as a **template**, committing the lock file would:
-
-- Add noise for first-time users
-- Immediately become stale after cloning
-- Provide limited benefit for a one-time bootstrap project
-
-Downstream Terraform projects are encouraged to commit their own `terraform.lock.hcl` files as appropriate.
-
----
-
-## What This Repository Does _Not_ Do
-
-- It does not manage application or environment infrastructure
-- It does not configure CI/CD pipelines
-- It does not store its own Terraform state remotely
-
-Those responsibilities belong in downstream Terraform repositories.
-
----
-
-## License
-
-MIT
+1.  Creates Terraform backend infrastructure on AWS.
+2.  Supports a clean, documented bootstrap workflow.
+3.  Can migrate its own state to remote S3 storage.
+4.  Provides durable backend infrastructure for all other Terraform
+    projects.
